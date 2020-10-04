@@ -9,6 +9,8 @@
 #include <caf/all.hpp>
 #include <google/protobuf/util/json_util.h>
 #include <boost/asio.hpp>
+#include <boost/smart_ptr.hpp>
+
 
 // This file is partially included in the manual, do not modify
 // without updating the references in the *.tex files!
@@ -17,203 +19,134 @@
 using std::cout;
 using std::endl;
 using std::pair;
-using namespace boost::asio::ip::tcp;
+using boost::asio::ip::tcp;
 using namespace caf;
 
 using EventActor = event_based_actor;
 using SomeAtom = atom_constant<atom("Some")>;
-using CreateConnectionMsg = atom_constant<atom("CreateConnectionMsg")>;
-using InitConnection = atom_constant<atom("InitConnection")>;
-using StartAcceptingCmd = atom_constant<atom("StartAcceptingCmd")>;
+using BoostError = atom_constant<atom("BoostError")>;
+using CreateConnectionMsg = atom_constant<atom("CreateCon")>;
+using InitConnection = atom_constant<atom("InitConnec")>;
+using StartAcceptingCmd = atom_constant<atom("StartAcc")>;
 
+typedef boost::shared_ptr<tcp::socket> SocketPtr;
+const int max_length = 2;
 struct ServerState {
-    int clients{0};
+    int port{0};
     std::string name{""};
-    asio::io_service ioService;
-    asio::ip::tcp::acceptor* acceptor;
+    boost::asio::io_service ioService;
+    tcp::acceptor* acceptor;
 
-    ~ServerState() {
-        delete acceptor;
-    }
 };
-
 struct ConnectionState {
-    boost::asio::ip::tcp::socket socket;
-    enum { max_length = 1024 };
-    char data_[max_length];
+    SocketPtr socket;
+
 };
-class session
-{
+using Test = typed_actor<replies_to<BoostError, int>::with<int>>;
+
+
+
+
+
+class ErrorHandler : public Test::base {
 public:
-    session(boost::asio::io_service& io_service)
-            : socket_(io_service)
-    {
+    ErrorHandler(actor_config& cfg) : Test::base(cfg) {
+        // nop
     }
 
-    tcp::socket& socket()
-    {
-        return socket_;
+    behavior_type make_behavior() override {
+        return make_typed();
     }
 
-    tcp::socket socket_;
-
-};
-
-class server
-{
-public:
-    server(boost::asio::io_service& io_service, short port)
-            : io_service_(io_service),
-              acceptor_(io_service, tcp::endpoint(tcp::v4(), port))
-    {
-        start_accept();
-    }
-
-private:
-    void start_accept()
-    {
-        session* new_session = new session(io_service_);
-        acceptor_.async_accept(new_session->socket(),
-                               boost::bind(&server::handle_accept, this, new_session,
-                                           boost::asio::placeholders::error));
-    }
-
-    void handle_accept(session* new_session,
-                       const boost::system::error_code& error)
-    {
-        if (!error)
-        {
-            new_session->start();
-        }
-        else
-        {
-            delete new_session;
-        }
-
-        start_accept();
-    }
-
-    boost::asio::io_service& io_service_;
-    tcp::acceptor acceptor_;
-};
-class ConnectionActor: public stateful_actor<ConnectionState>
-{
-    ConnectionActor(actor_config& cfg, Io)
-            : stateful_actor<ServerState>(cfg) {
-        initializing_.assign([=](InitConnection) {
-
-            become(running_);
-        });
-
-
-    }
-protected:
-    behavior make_behavior() override {
-        // start thinking
-        state.socket_.async_read_some(boost::asio::buffer(state.data_, state.max_length),
-                                      boost::bind(&ConnectionActor::handle_read, this,
-                                                  boost::asio::placeholders::error,
-                                                  boost::asio::placeholders::bytes_transferred));
-        send(this);
-        // philosophers start to think after receiving {think}
+    Test::behavior_type make_typed() {
         return {
-                [=]() {
-                    send(this, SomeAtom::value);
-                    aout(this) << name_ << " starts to think\n";
-                    become(denied_);
-
+                [=](BoostError, int error) {
+                    if (error == boost::asio::error::eof) {
+                        cout << "Connection closed cleanly by peer." << error <<  endl; // Connection closed cleanly by peer.
+                        return 1;
+                    }
+                    else if (error) {
+                        cout << "Error:" << error << endl;
+                        return 1;
+                    }
                 },
         };
     }
-
-private:
-    void handle_read(const boost::system::error_code& error,
-                     size_t bytes_transferred)
-    {
-        if (!error)
-        {
-            boost::asio::async_write(state.socket_,
-                                     boost::asio::buffer(state.data_, bytes_transferred),
-                                     boost::bind(&ConnectionActor::handle_write, this,
-                                                 boost::asio::placeholders::error));
-        }
-        else
-        {
-            delete this;
-        }
-    }
-
-    void handle_write(const boost::system::error_code& error)
-    {
-        if (!error)
-        {
-            socket_.async_read_some(boost::asio::buffer(state.data_, max_length),
-                                    boost::bind(&ConnectionActor::handle_read, this,
-                                                boost::asio::placeholders::error,
-                                                boost::asio::placeholders::bytes_transferred));
-        }
-        else
-        {
-            delete this;
-        }
-    }
-
-    behavior running_;   // could not get first chopsticks
-    behavior initializing_;   // could not get first chopsticks
-
 };
 
+class ConnectionActor : public stateful_actor<ConnectionState> {
+public:
+    ConnectionActor(actor_config& cfg, const SocketPtr& socket)
+            : stateful_actor<ConnectionState>(cfg)
+    {
+        state.socket = socket;
+    }
+
+protected:
+    behavior make_behavior() override {
+        // start thinking
+
+        send(this, SomeAtom::value);
+        // philosophers start to think after receiving {think}
+        auto errorHandler = home_system().spawn<ErrorHandler>();
+
+
+        return {
+            [this, errorHandler](SomeAtom) {
+
+                char data[max_length];
+                boost::system::error_code error;
+                size_t length = 0;
+                while(length < max_length*2 || error)
+                {
+                    length += state.socket->read_some(boost::asio::buffer(data /*, max_length - length*/), error);
+                    cout << "Read: " << length << " bytes" << std::endl;
+
+                }
+
+                if(error){
+                    return delegate(errorHandler, BoostError::value, error.value());
+                }
+
+                cout << "Writing bytes: " << data << std::endl;
+
+                boost::asio::write(*state.socket, boost::asio::buffer(data, length));
+                send(this, SomeAtom::value);
+
+            }
+        };
+    }
+private:
+    behavior error_;
+
+};
 class ServerActor : public stateful_actor<ServerState> {
 public:
     ServerActor(actor_config& cfg, int port)
             : stateful_actor<ServerState>(cfg)
     {
-        state.acceptor = new acceptor(state.ioService, endpoint(v4(), port));
-
-        // a philosopher that receives {eat} stops thinking and becomes hungry
-        // philosopher was *not* able to obtain the first chopstick
-        accepting_.assign([=](CreateConnectionMsg) {
-
-            if (state.clients > 10) {
-                quit();
-            }
-            state.clients++;
-            cout << "accepting_ new connection" << endl;
-//            delayed_send(this, std::chrono::seconds(3) , CreateConnectionMsg::value);
-
-            become(eating_);
-        });
-        // philosopher obtained both chopstick and eats (for five seconds)
-        eating_.assign([=](SomeAtom) {
-            delayed_send(this, std::chrono::seconds(3), SomeAtom::value);
-
-            cout << "thinking" << endl;
-            become(denied_);
-        });
+        state.port = port;
     }
 
-    void setName(const std::string n) { state.name = n; }
-    void increment() { state.clients++; }
 
 protected:
     behavior make_behavior() override {
         // start thinking
-        send(this, SomeAtom::value);
-        // philosophers start to think after receiving {think}
-        return {
-                [=](SomeAtom) {
-                    send(this, SomeAtom::value);
-                    aout(this) << name_ << " starts to think\n";
-                    become(denied_);
+        state.acceptor = new tcp::acceptor(state.ioService, tcp::endpoint(tcp::v4(), state.port));
 
-                },
+        send(this, SomeAtom::value);
+
+        return {
+            [=](SomeAtom) {
+                SocketPtr sock{new tcp::socket(state.ioService)};
+                state.acceptor->accept(*sock);
+                home_system().spawn<ConnectionActor>(sock);
+                cout << "Accepted connection" << endl;
+                send(this, SomeAtom::value);
+
+            },
         };
     }
-
-private:
-    std::string name_;  // the name of this philosopher
-    behavior denied_;   // could not get first chopsticks
-    behavior eating_;   // wait for some time, then go thinking again
 };
 //
 //struct config : actor_system_config {
