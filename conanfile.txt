@@ -2,12 +2,15 @@
  protoc_installer/3.9.1@bincrafters/stable
 
  [requires]
- gtest/1.10.0
+ gtest/1.7.0@lasote/stable
  caf/0.17.6@bincrafters/stable
  protobuf/3.9.1
  poco/1.10.1
  openssl/1.0.2u
  boost/1.74.0
+
+ [options]
+ gtest:shared=True
 
  [generators]
  cmake
