@@ -2,7 +2,7 @@
  protoc_installer/3.9.1@bincrafters/stable
 
  [requires]
- gtest/1.7.0@lasote/stable
+ gtest/1.10.0
  caf/0.17.6@bincrafters/stable
  protobuf/3.9.1
  poco/1.10.1

@@ -1,6 +1,6 @@
-cmake_minimum_required(VERSION 3.17)
+cmake_minimum_required(VERSION 3.16)
 
-enable_testing()
+
 
 project(Server CXX)
 add_definitions("-std=c++2a")
@@ -15,9 +15,11 @@ endif()
 include(${CMAKE_BINARY_DIR}/conan.cmake)
 
 conan_cmake_run(CONANFILE conanfile.txt
-        BASIC_SETUP BUILD KEEP_RPATHS)
+        BASIC_SETUP BUILD missing KEEP_RPATHS)
 
-find_package(GTest REQUIRED)
+enable_testing()
+
+#find_package(GTest REQUIRED)
 
 add_subdirectory(src)
 add_subdirectory(tests)
@@ -26,6 +28,6 @@ add_subdirectory(tests)
 
 add_executable(Server main.cpp)
 message("Linking conan libraries: ${CONAN_LIBS} ")
-target_link_libraries(Server ServerLib ${CONAN_LIBS} ${GTEST_BOTH_LIBRARIES} )
+target_link_libraries(Server ServerLib ${CONAN_LIBS} )
 
 # target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_BINARY_DIR} ${CMAKE_BINARY_DIR}/src )
